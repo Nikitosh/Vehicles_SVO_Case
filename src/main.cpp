@@ -1,5 +1,9 @@
-#include <bits/stdc++.h>
+#include <climits>
+#include <iostream>
 #include <optional>
+#include <random>
+#include <set>
+#include <vector>
 
 #include "lib/rapidcsv.h"
 
@@ -17,7 +21,7 @@ const string AIRCRAFT_STANDS_PATH_PRIVATE = "../data/private/Aircraft_Stands_Pri
 const string HANDLING_RATES_PATH_PRIVATE = "../data/private/Handling_Rates_Private.csv";
 const string HANDLING_TIME_PATH_PRIVATE = "../data/private/Handling_Time_Private.csv";
 const string TIMETABLE_PATH_PRIVATE = "../data/private/Timetable_private.csv";
-const string SOLUTION_PATH_PRIVATE = "../data/private/Solution_Private";
+const string SOLUTION_PATH_PRIVATE = "../data/private/Solution_Private.csv";
 
 const string AIRCRAFT_CLASS_COLUMN = "Aircraft_Class";
 const string MAX_SEATS_COLUMN = "Max_Seats";
@@ -415,7 +419,9 @@ struct Configuration {
 				},
 				.terminal = doc.GetCell<int>(TERMINAL_COLUMN, i, 
 					[](const string& t, int& val) { val = t.empty() ? 0 : stoi(t); }),
-				.taxiingTime = doc.GetCell<int>(TAXIING_TIME_COLUMN, i)	
+				.taxiingTime = doc.GetCell<int>(TAXIING_TIME_COLUMN, i),
+				.occupiedSegments = {},
+				.wideOccupiedSegments = {}
 			});
 		}
 		return stands;		
@@ -441,7 +447,8 @@ struct Configuration {
 				.passengers = doc.GetCell<int>(FLIGHT_PASSENGERS_COLUMN, i),
 				.aircraftClass = "",
 				.isWide = false,
-				.handlingTimes = {0, 0}
+				.handlingTimes = {0, 0},
+				.adjustedTimestamp = 0
 			});
 		}
 		return flights;
@@ -457,13 +464,30 @@ struct Solution {
 		int rows = (int) doc.GetRowCount();
 		for (int i = 0; i < rows; i++) 
 			doc.SetCell<int>(doc.GetColumnIdx(AIRCRAFT_STAND_COLUMN), i, config.stands[stands[i]].id);
-		doc.Save(solutionPath + "_" + to_string(score) + ".csv");
+		doc.Save(solutionPath);
 	}
 
 	void assign(Configuration& config, int flightId, int standIndex) {
 		score += config.costs[flightId][standIndex];
 		stands[flightId] = standIndex;
 		config.stands[standIndex].addSegment(config.handlingSegments[flightId][standIndex], config.flights[flightId].isWide);
+	}
+
+	static Solution readSolution(const string& solutionPath, Configuration& config) {
+		rapidcsv::Document doc(solutionPath);
+		int rows = (int) doc.GetRowCount();
+		Solution solution;
+		solution.stands.resize(rows);
+		vector<Flight> flights;
+		for (int flightId = 0; flightId < rows; flightId++) {
+			int standId = doc.GetCell<int>(AIRCRAFT_STAND_COLUMN, flightId);
+			for (int standIndex = 0; standIndex < (int) config.stands.size(); standIndex++) {
+				if (config.stands[standIndex].id == standId) {
+					solution.assign(config, flightId, standIndex);
+				}
+			}
+		}
+		return solution;
 	}
 };
 
@@ -692,50 +716,67 @@ private:
 	int iterations_;
 };
 
-int main() {
-	/*
-	Configuration config = Configuration::readConfiguration(
-		AIRCRAFT_CLASSES_PATH_PUBLIC,
-		AIRCRAFT_STANDS_PATH_PUBLIC, 
-		HANDLING_RATES_PATH_PUBLIC, 
-		HANDLING_TIME_PATH_PUBLIC, 
-		TIMETABLE_PATH_PUBLIC);
-	*/
-	Configuration config = Configuration::readConfiguration(
-		AIRCRAFT_CLASSES_PATH_PRIVATE,
-		AIRCRAFT_STANDS_PATH_PRIVATE, 
-		HANDLING_RATES_PATH_PRIVATE, 
-		HANDLING_TIME_PATH_PRIVATE, 
-		TIMETABLE_PATH_PRIVATE);
+int main(int argc, char** argv) {
+	if (argc < 2) {
+		cerr << "ERROR: You should specify run mode: private or custom.\n";
+		return 0;
+	}
+	string runMode = argv[1];
 
-	/*
-	TheoreticalMinimumSolver theoreticalMinimumSolver;
-	Solution solution = theoreticalMinimumSolver.solve(config);
-	cout << "Theoretical minimum score: " << solution.score << "\n";
-	*/
+	string aircraftClassPath;
+	string aircraftStandsPath;
+	string handlingRatesPath;
+	string handlingTimePath;
+	string timetablePath;
+	string outputSolutionPath;
+	int inputSolutionPathIndex = -1;
+	if (runMode == "private") {
+		aircraftClassPath = AIRCRAFT_CLASSES_PATH_PRIVATE;
+		aircraftStandsPath = AIRCRAFT_STANDS_PATH_PRIVATE;
+		handlingRatesPath = HANDLING_RATES_PATH_PRIVATE;
+		handlingTimePath = HANDLING_TIME_PATH_PRIVATE;
+		timetablePath = TIMETABLE_PATH_PRIVATE;
+		outputSolutionPath = SOLUTION_PATH_PRIVATE;
+		inputSolutionPathIndex = 2;
+	} else {
+		if (argc < 8) {
+			cerr << "ERROR: For custom mode you should specify 6 paths of corresponding tables: " <<
+				"aircraft_classes, aircraft_stands, handling_rates, handling_time, timetable, solution.\n";
+			return 0;
+		}
+		aircraftClassPath = argv[2];
+		aircraftStandsPath = argv[3];
+		handlingRatesPath = argv[4];
+		handlingTimePath = argv[5];
+		timetablePath = argv[6];
+		outputSolutionPath = argv[7];
+		inputSolutionPathIndex = 8;
+	}
 
+	Configuration config = Configuration::readConfiguration(
+		aircraftClassPath,
+		aircraftStandsPath,
+		handlingRatesPath,
+		handlingTimePath,
+		timetablePath);
+
+	Solution solution;
 	vector<int> flightIds;
 	for (const auto& flight : config.flights)
 		flightIds.push_back(flight.id);
-	Solution solution;
 	solution.stands.resize(flightIds.size());
-	GreedyAircraftClassAdjustedTimestampsSolver greedyAircraftClassAdjustedTimestampsSolver(13);
-	greedyAircraftClassAdjustedTimestampsSolver.solve(config, flightIds, solution);
-	cout << "Greedy aircraft class solution score: " << solution.score << "\n";
-	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
 
-	/*
-	GreedyCostSolver greedyCostSolver;
-	solution = greedyCostSolver.solve(config);
-	cout << "Greedy cost solution score: " << solution.score << "\n";
-	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
-	*/
+	if (argc > inputSolutionPathIndex) {
+		string solutionPath = argv[inputSolutionPathIndex];
+		solution = Solution::readSolution(solutionPath, config);
+	} else {
+		GreedyAircraftClassAdjustedTimestampsSolver greedyAircraftClassAdjustedTimestampsSolver(13);
+		greedyAircraftClassAdjustedTimestampsSolver.solve(config, flightIds, solution);
+	}
 
 	StupidSolver stupidSolver;
-    GreedyAircraftClassSolver greedyAircraftClassSolver;
-	RandomSolutionOptimizer optimizer(&stupidSolver, 100000000);
-//    RandomSolutionOptimizer optimizer(&greedyAircraftClassSolver, 10000000);
+	RandomSolutionOptimizer optimizer(&stupidSolver, 1000000);
 	optimizer.optimize(config, solution);
 	cout << "Optimized solution score: " << solution.score << "\n";
-	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
+	solution.write(config, timetablePath, outputSolutionPath);
 }

@@ -117,13 +117,36 @@ int parseTimestamp(const string& timestamp) {
 struct Event {
 	int start;
 	int finish;
-	Event(int start_, int finish_): start(start_), finish(finish_) {}
+	int flightId;
+	Event() {}
+	Event(int start_, int finish_, int flightId_): start(start_), finish(finish_), flightId(flightId_) {}
 	bool operator<(const Event& event) const {
 		if (start != event.start)
 			return start < event.start;
 		return finish < event.finish;
 	}
 };
+
+vector<Event> findOverlappingEvents(const set<Event>& segments, const Event& event) {
+	auto it = segments.lower_bound(event);
+	vector<Event> overlappingEvents;
+	if (it != segments.begin()) {
+		auto prevIt = it;
+		--prevIt;
+		if (event.start <= prevIt->finish)
+			overlappingEvents.push_back(*prevIt);
+	}
+	while (it != segments.end()) {
+		if (it->start > event.finish)
+			break;
+		overlappingEvents.push_back(*it);
+		it++;
+	}
+	return overlappingEvents;
+}
+
+struct Configuration;
+struct Solution; 
 
 struct Stand {
 	int id;
@@ -159,7 +182,7 @@ struct Stand {
 
 	bool canFit(const Event& segment, bool isWide) const {
 		const auto& segments = isWide ? wideOccupiedSegments : occupiedSegments;
-		auto it = segments.lower_bound(Event(segment.start, segment.start));
+		auto it = segments.lower_bound(Event(segment.start, segment.start, 0));
 		if (it != segments.end() && it->start <= segment.finish)
 			return false;
 		if (it != segments.begin()) {
@@ -175,6 +198,13 @@ struct Stand {
 		if (isWide)
 			wideOccupiedSegments.insert(flightSegment);
 	}
+
+	void removeSegment(const Event& flightSegment) {
+		occupiedSegments.erase(flightSegment);
+		wideOccupiedSegments.erase(flightSegment);		
+	}
+
+	vector<int> eraseAllOverlappingEvents(const Event& flightSegment, bool isWide, const Configuration& config, Solution& solution);
 };
 
 struct Flight {
@@ -195,24 +225,17 @@ struct Flight {
 	bool isWide;
 	// Handling times: <jet bridge, away>.
 	pair<int, int> handlingTimes;
+	int adjustedTimestamp;
 
 	inline Event getHandlingSegment(int taxiingTime, int handlingTime) const {
 		if (adType == 'D')
-			return Event(timestamp - taxiingTime - handlingTime, timestamp - taxiingTime);
-		return Event(timestamp + taxiingTime, timestamp + taxiingTime + handlingTime);
+			return Event(timestamp - taxiingTime - handlingTime, timestamp - taxiingTime, id);
+		return Event(timestamp + taxiingTime, timestamp + taxiingTime + handlingTime, id);
 	}
-};
 
-struct Solution {
-	int score = 0;
-	vector<int> stands;
-	
-	void write(const string& timetablePath, const string& solutionPath) {
-		rapidcsv::Document doc(timetablePath);
-		int rows = (int) doc.GetRowCount();
-		for (int i = 0; i < rows; i++) 
-			doc.SetCell<int>(doc.GetColumnIdx(AIRCRAFT_STAND_COLUMN), i, stands[i]);
-		doc.Save(solutionPath + "_" + to_string(score) + ".csv");
+	inline int getAdjustedTimestamp(int taxiingTime) const {
+		int handlingTime = (handlingTimes.first + handlingTimes.second) / 2;
+		return getHandlingSegment(taxiingTime, handlingTime).start;
 	}
 };
 
@@ -226,7 +249,11 @@ struct Configuration {
 	int taxiingCost;
 	vector<Stand> stands;
 	vector<Flight> flights;
-
+	vector<vector<int>> costs;
+	vector<vector<pair<int, int>>> sortedCosts;
+	vector<vector<Event>> handlingSegments;
+	vector<vector<int>> neighboringStands;
+	
 	void clear() {
 		for (Stand& stand : stands)
 			stand.clear();
@@ -236,36 +263,17 @@ struct Configuration {
 		return lower_bound(maxSeatsClasses.begin(), maxSeatsClasses.end(), pair<int, string>(capacity, ""))->second;
 	}
 
-	optional<int> getCost(const Flight& flight, int standIndex, bool shouldAssign) {
-		Stand& stand = stands[standIndex];
-		int cost = stand.taxiingTime * taxiingCost;
-		char jetBridge = (flight.adType == 'A' ? stand.jetBridgeArrival : stand.jetBridgeDeparture);
-		int parkingCost = (jetBridge == 'N' ? parkingCostAway : parkingCostJetBridge); 
-		int handlingTime = 0;
-		if (jetBridge == flight.idType && flight.terminal == stand.terminal) {
-			handlingTime = flight.handlingTimes.first;
-		} else {
-			handlingTime = flight.handlingTimes.second;
-			cost += (flight.passengers + BUS_CAPACITY - 1) / BUS_CAPACITY * busCost * stand.busRideTimeToTerminal[flight.terminal - 1];
+	bool canFit(Flight& flight, int standIndex) {
+		int flightId = flight.id;
+		Event handlingSegment = handlingSegments[flightId][standIndex];
+		if (!stands[standIndex].canFit(handlingSegment, /*isWide=*/false))
+			return false;
+		if (flight.isWide) {
+			for (int neighboringStandId : neighboringStands[standIndex])
+				if (!stands[neighboringStandId].canFit(handlingSegment, /*isWide=*/true))
+					return false;
 		}
-		cost += handlingTime * parkingCost;
-		Event handlingSegment = flight.getHandlingSegment(stand.taxiingTime, handlingTime);
-		if (flight.isWide && jetBridge != 'N') {
-			for (int i = standIndex - 1; i <= standIndex + 1; i += 2) {
-				if (i >= 0 && i < (int) stands.size() && abs(stand.id - stands[i].id) == 1 
-					&& stand.terminal == stands[i].terminal 
-					&& stands[i].jetBridgeArrival != 'N' 
-					&& !stands[i].canFit(handlingSegment, /*isWide=*/true)) {
-					return nullopt;
-				}
-			}
-		}
-		if (!stand.canFit(handlingSegment, /*isWide=*/false))
-			return nullopt;
-		if (shouldAssign) {
-			stand.addSegment(handlingSegment, flight.isWide);
-		}
-		return cost;
+		return true;
 	}
 
 	void adjustFlights() {
@@ -279,11 +287,57 @@ struct Configuration {
 		int maxTaxiingTime = max_element(stands.begin(), stands.end(), 
 			[](const Stand &s1, const Stand &s2) { return s1.taxiingTime < s2.taxiingTime; })->taxiingTime;
 		int maxHandlingTime = numeric_limits<int>::min();
-		for (const auto& handlingTimes : aircraftClassHandlingTime)
-			maxHandlingTime = max(maxHandlingTime, max(handlingTimes.second.first, handlingTimes.second.second));
+		for (const auto& handlingTime : aircraftClassHandlingTime)
+			maxHandlingTime = max(maxHandlingTime, max(handlingTime.second.first, handlingTime.second.second));
 		
 		for (auto& flight: flights)
 			flight.timestamp += maxTaxiingTime + maxHandlingTime - minTimestamp;
+	}
+
+	int calculateCost(int flightIndex, int standIndex, Event& handlingSegment) {
+		Flight& flight = flights[flightIndex];
+		Stand& stand = stands[standIndex];
+		int cost = stand.taxiingTime * taxiingCost;
+		char jetBridge = (flight.adType == 'A' ? stand.jetBridgeArrival : stand.jetBridgeDeparture);
+		int parkingCost = (jetBridge == 'N' ? parkingCostAway : parkingCostJetBridge); 
+		int handlingTime = 0;
+		if (jetBridge == flight.idType && flight.terminal == stand.terminal) {
+			handlingTime = flight.handlingTimes.first;
+		} else {
+			handlingTime = flight.handlingTimes.second;
+			cost += (flight.passengers + BUS_CAPACITY - 1) / BUS_CAPACITY * busCost 
+				* stand.busRideTimeToTerminal[flight.terminal - 1];
+		}
+		cost += handlingTime * parkingCost;
+		handlingSegment = flight.getHandlingSegment(stand.taxiingTime, handlingTime);
+		return cost;
+	}
+
+	void calculateCosts() {
+		costs.resize(flights.size(), vector<int>(stands.size()));
+		sortedCosts.resize(flights.size(), vector<pair<int, int>>(stands.size()));
+		handlingSegments.resize(flights.size(), vector<Event>(stands.size()));
+		for (int i = 0; i < (int) flights.size(); i++) {
+			for (int j = 0; j < (int) stands.size(); j++) {
+				costs[i][j] = calculateCost(i, j, handlingSegments[i][j]);
+				sortedCosts[i][j] = make_pair(costs[i][j], j);
+			}
+			sort(sortedCosts[i].begin(), sortedCosts[i].end());
+		}
+	}
+
+	void calculateNeighboringStands() {
+		neighboringStands.resize(stands.size());
+		for (int i = 0; i < (int) stands.size(); i++) {
+			if (stands[i].jetBridgeArrival == 'N')
+				continue;
+			for (int j = i - 1; j <= i + 1; j += 2)
+				if (j >= 0 && j < (int) stands.size() && abs(stands[i].id - stands[j].id) == 1 
+					&& stands[i].terminal == stands[j].terminal 
+					&& stands[j].jetBridgeArrival != 'N') {
+					neighboringStands[i].push_back(j);
+				}
+		}
 	}
 
 	static Configuration readConfiguration(const string& aircraftClassesPath,
@@ -302,6 +356,8 @@ struct Configuration {
 		config.stands = readAircraftStands(aircraftStandsPath);
 		config.flights = readTimetable(timetablePath);
 		config.adjustFlights();
+		config.calculateCosts();
+		config.calculateNeighboringStands();
 		return config;
 	}
 
@@ -391,102 +447,207 @@ struct Configuration {
 	}
 };
 
+struct Solution {
+	int score = 0;
+	vector<int> stands;
+	
+	void write(const Configuration& config, const string& timetablePath, const string& solutionPath) {
+		rapidcsv::Document doc(timetablePath);
+		int rows = (int) doc.GetRowCount();
+		for (int i = 0; i < rows; i++) 
+			doc.SetCell<int>(doc.GetColumnIdx(AIRCRAFT_STAND_COLUMN), i, config.stands[stands[i]].id);
+		doc.Save(solutionPath + "_" + to_string(score) + ".csv");
+	}
+
+	void assign(Configuration& config, int flightId, int standIndex) {
+		score += config.costs[flightId][standIndex];
+		stands[flightId] = standIndex;
+		config.stands[standIndex].addSegment(config.handlingSegments[flightId][standIndex], config.flights[flightId].isWide);
+	}
+};
+
+vector<int> Stand::eraseAllOverlappingEvents(const Event& flightSegment, bool isWide, const Configuration& config, Solution& solution) {
+	vector<Event> overlappingEvents = isWide ? findOverlappingEvents(wideOccupiedSegments, flightSegment) 
+		: findOverlappingEvents(occupiedSegments, flightSegment);
+	vector<int> flightIds;
+	for (const Event& event : overlappingEvents) {
+		occupiedSegments.erase(event);
+		wideOccupiedSegments.erase(event);
+		int standIndex = solution.stands[event.flightId];
+		solution.score -= config.costs[event.flightId][standIndex];
+		solution.stands[event.flightId] = -1;
+		flightIds.push_back(event.flightId);
+	} 	
+	return flightIds;
+}
+
 class Solver {
 public:
-	virtual Solution solve(Configuration& config) = 0;
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) = 0;
 };
 
 class TheoreticalMinimumSolver: public Solver {
 public:
-	virtual Solution solve(Configuration& config) override {
-		Solution solution;
-		for (const auto& flight : config.flights) {
-			int minCost = numeric_limits<int>::max();
-			int bestStandIndex = 0;
-			for (int i = 0; i < (int) config.stands.size(); i++) {
-				auto cost = config.getCost(flight, i, false);
-				if (cost.has_value() && minCost > cost.value())
-					minCost = cost.value(), bestStandIndex = i; 
-			}
-			solution.score += config.getCost(flight, bestStandIndex, false).value();
-		}
-		return solution;
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
+		for (int flightId : flightIds)
+			solution.score += config.sortedCosts[flightId][0].first;
 	}
 };
 
 
-class RandomSolver: public Solver {
+class StupidSolver: public Solver {
 public:
-	virtual Solution solve(Configuration& config) override {
-		Solution solution;
-		solution.stands.resize(config.flights.size());
-		for (const auto& flight : config.flights) {
-			int minCost = numeric_limits<int>::max();
-			int bestStandIndex = 0;
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
+		for (int flightId : flightIds) {
+			auto& flight = config.flights[flightId];
 			for (int i = 0; i < (int) config.stands.size(); i++) {
-				auto cost = config.getCost(flight, i, false);
-				if (cost.has_value() && minCost > cost.value())
-					minCost = cost.value(), bestStandIndex = i; 
+				int standIndex = config.sortedCosts[flightId][i].second;
+				if (config.canFit(flight, standIndex)) {
+					solution.assign(config, flightId, standIndex);
+					break;
+				}
 			}
-			solution.score += config.getCost(flight, bestStandIndex, true).value();
-			solution.stands[flight.id] = config.stands[bestStandIndex].id;
 		}
-		return solution;
 	}
 };
+
 
 class GreedyTimestampSolver: public Solver {
 public:
-	virtual Solution solve(Configuration& config) override {
-		Solution solution;
-		solution.stands.resize(config.flights.size());
-		sort(config.flights.begin(), config.flights.end(), 
-			[](const Flight& f1, const Flight& f2) {
-				if (f1.timestamp != f2.timestamp)
-					return f1.timestamp < f2.timestamp;
-				return f1.id < f2.id;
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
+		vector<int> sortedFlightIds = flightIds;
+		sort(sortedFlightIds.begin(), sortedFlightIds.end(), 
+			[&config](int flightId1, int flightId2) {
+				if (config.flights[flightId1].timestamp != config.flights[flightId2].timestamp)
+					return config.flights[flightId1].timestamp < config.flights[flightId2].timestamp;
+				return flightId1 < flightId2;
 			});
-		for (const auto& flight : config.flights) {
-			int minCost = numeric_limits<int>::max();
-			int bestStandIndex = 0;
-			for (int i = 0; i < (int) config.stands.size(); i++) {
-				auto cost = config.getCost(flight, i, false);
-				if (cost.has_value() && minCost > cost.value())
-					minCost = cost.value(), bestStandIndex = i; 
-			}
-			solution.score += config.getCost(flight, bestStandIndex, true).value();
-			solution.stands[flight.id] = config.stands[bestStandIndex].id;
-		}
-		return solution;
+		StupidSolver().solve(config, sortedFlightIds, solution);
 	}
 };
 
 class GreedyAircraftClassSolver: public Solver {
 public:
-	virtual Solution solve(Configuration& config) override {
-		Solution solution;
-		solution.stands.resize(config.flights.size());
-		sort(config.flights.begin(), config.flights.end(), 
-			[](const Flight& f1, const Flight& f2) {
-				if (f1.isWide != f2.isWide)
-					return f1.isWide > f2.isWide;
-				if (f1.timestamp != f2.timestamp)
-					return f1.timestamp < f2.timestamp;
-				return f1.id < f2.id;
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
+		vector<int> sortedFlightIds = flightIds;
+		sort(sortedFlightIds.begin(), sortedFlightIds.end(), 
+			[&config](int flightId1, int flightId2) {
+				if (config.flights[flightId1].isWide != config.flights[flightId2].isWide)
+					return config.flights[flightId1].isWide < config.flights[flightId2].isWide;
+				if (config.flights[flightId1].timestamp != config.flights[flightId2].timestamp)
+					return config.flights[flightId1].timestamp < config.flights[flightId2].timestamp;
+				return flightId1 < flightId2;
 			});
-		for (const auto& flight : config.flights) {
-			int minCost = numeric_limits<int>::max();
-			int bestStandIndex = 0;
-			for (int i = 0; i < (int) config.stands.size(); i++) {
-				auto cost = config.getCost(flight, i, false);
-				if (cost.has_value() && minCost > cost.value())
-					minCost = cost.value(), bestStandIndex = i; 
-			}
-			solution.score += config.getCost(flight, bestStandIndex, true).value();
-			solution.stands[flight.id] = config.stands[bestStandIndex].id;
-		}
-		return solution;
+		StupidSolver().solve(config, sortedFlightIds, solution);
 	}
+};
+
+class GreedyAircraftClassAdjustedTimestampsSolver: public Solver {
+public:
+	GreedyAircraftClassAdjustedTimestampsSolver(int meanTaxiingTime): meanTaxiingTime_(meanTaxiingTime) {}
+
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
+		vector<int> sortedFlightIds = flightIds;
+		int meanTaxiingTime = meanTaxiingTime_;
+		sort(sortedFlightIds.begin(), sortedFlightIds.end(), 
+			[&config, meanTaxiingTime](int flightId1, int flightId2) {
+				if (config.flights[flightId1].isWide != config.flights[flightId2].isWide)
+					return config.flights[flightId1].isWide < config.flights[flightId2].isWide;
+				int f1Timestamp = config.flights[flightId1].getAdjustedTimestamp(meanTaxiingTime);
+				int f2Timestamp = config.flights[flightId2].getAdjustedTimestamp(meanTaxiingTime);
+				if (f1Timestamp != f2Timestamp)
+					return f1Timestamp < f2Timestamp;
+				return flightId1 < flightId2;
+			});
+		StupidSolver().solve(config, sortedFlightIds, solution);
+	}
+
+private:
+	int meanTaxiingTime_;
+};
+
+class GreedyCostSolver: public Solver {
+public:
+	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
+		vector<int> sortedFlightIds = flightIds;
+		sort(sortedFlightIds.begin(), sortedFlightIds.end(), 
+			[&config](int flightId1, int flightId2) {
+				int cost1 = config.sortedCosts[flightId1][0].first;
+				int cost2 = config.sortedCosts[flightId2][0].first;
+				if (cost1 != cost2)
+					return cost1 > cost2;
+				return flightId1 < flightId2;
+			});
+		StupidSolver().solve(config, sortedFlightIds, solution);
+	}
+};
+
+class SolutionOptimizer {
+public:
+	virtual void optimize(Configuration& config, Solution& solution) = 0;
+};
+
+class RandomSolutionOptimizer : public SolutionOptimizer {
+public:
+	RandomSolutionOptimizer(Solver* solver, int iterations): solver_(solver), iterations_(iterations) {}
+
+	void optimize(Configuration& config, Solution& solution) override {
+		for (int iteration = 0; iteration < iterations_; iteration++) {
+			Solution optimizedSolution = solution;
+			
+			for (int g = 0; g < 1; g++) {
+				int flightId = rng() % (int) config.flights.size();
+				int standIndex = solution.stands[flightId];
+				int standSortedPosition = 0;
+				for (int j = 0; j < (int) config.stands.size(); j++) {
+					if (config.sortedCosts[flightId][j].second == standIndex) {
+						standSortedPosition = j;
+						break;
+					}
+				}
+				if (standSortedPosition == 0)
+					continue;
+				config.stands[standIndex].removeSegment(config.handlingSegments[flightId][standIndex]);
+				optimizedSolution.score -= config.costs[flightId][standIndex];
+				optimizedSolution.stands[flightId] = -1;
+
+				int newStandSortedPosition = rng() % standSortedPosition;
+				if (newStandSortedPosition == standSortedPosition)
+					newStandSortedPosition--;
+				int newStandIndex = config.sortedCosts[flightId][newStandSortedPosition].second;
+				Event handlingSegment = config.handlingSegments[flightId][newStandIndex];
+				vector<int> removedFlightIds = config.stands[newStandIndex].eraseAllOverlappingEvents(handlingSegment, /*isWide=*/false, config, optimizedSolution);
+				if (config.flights[flightId].isWide) {
+					for (int neighboringStandIndex : config.neighboringStands[newStandIndex]) {
+						vector<int> removedNeighboringFlightIds = 
+							config.stands[neighboringStandIndex].eraseAllOverlappingEvents(handlingSegment, /*isWide=*/true, config, optimizedSolution);
+						removedFlightIds.insert(removedFlightIds.end(), removedNeighboringFlightIds.begin(), removedNeighboringFlightIds.end());
+					}
+				}
+
+				optimizedSolution.assign(config, flightId, newStandIndex);
+			
+				shuffle(removedFlightIds.begin(), removedFlightIds.end(), rng);
+				solver_->solve(config, removedFlightIds, optimizedSolution);
+			}
+			
+			cout << "Iteration: " << iteration << ", score: " << solution.score << "\n";
+			if (solution.score > optimizedSolution.score) {
+				solution = optimizedSolution;
+			} else {
+				config.clear();
+				for (int i = 0; i < (int) config.flights.size(); i++) {
+					int standIndex = solution.stands[i];
+					config.stands[standIndex].addSegment(config.handlingSegments[i][standIndex], config.flights[i].isWide);	
+				}
+			}
+		}
+	}
+
+private:
+	mt19937 rng;
+	Solver* solver_;
+	int iterations_;
 };
 
 int main() {
@@ -505,26 +666,32 @@ int main() {
 		HANDLING_TIME_PATH_PRIVATE, 
 		TIMETABLE_PATH_PRIVATE);
 	
+	/*
 	TheoreticalMinimumSolver theoreticalMinimumSolver;
-	Solution theoreticalMinimumSolution = theoreticalMinimumSolver.solve(config);
-	cout << "Theoretical minimum score: " << theoreticalMinimumSolution.score << "\n";
-	config.clear();
+	Solution solution = theoreticalMinimumSolver.solve(config);
+	cout << "Theoretical minimum score: " << solution.score << "\n";
+	*/
 
-	RandomSolver randomSolver;
-	Solution solution = randomSolver.solve(config);
-	cout << "Random solution score: " << solution.score << "\n";
-	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
-	config.clear();
-
-	GreedyTimestampSolver greedyTimestampSolver;
-	solution = greedyTimestampSolver.solve(config);
-	cout << "Greedy timestamp solution score: " << solution.score << "\n";
-	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
-	config.clear();
-
-	GreedyAircraftClassSolver greedyAircraftClassSolver;
-	solution = greedyAircraftClassSolver.solve(config);
+	vector<int> flightIds;
+	for (const auto& flight : config.flights)
+		flightIds.push_back(flight.id);
+	Solution solution;
+	solution.stands.resize(flightIds.size());
+	GreedyAircraftClassAdjustedTimestampsSolver greedyAircraftClassAdjustedTimestampsSolver(13);
+	greedyAircraftClassAdjustedTimestampsSolver.solve(config, flightIds, solution);
 	cout << "Greedy aircraft class solution score: " << solution.score << "\n";
-	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
-	config.clear();
+	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
+
+	/*
+	GreedyCostSolver greedyCostSolver;
+	solution = greedyCostSolver.solve(config);
+	cout << "Greedy cost solution score: " << solution.score << "\n";
+	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
+	*/
+
+	StupidSolver stupidSolver;
+	RandomSolutionOptimizer optimizer(&stupidSolver, 100000);
+	optimizer.optimize(config, solution);
+	cout << "Optimized solution score: " << solution.score << "\n";
+	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
 }

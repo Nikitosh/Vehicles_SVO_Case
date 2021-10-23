@@ -1,3 +1,4 @@
+// Solution concept that stores score and stands mapping.
 struct Solution {
 	int score = 0;
 	vector<int> stands;

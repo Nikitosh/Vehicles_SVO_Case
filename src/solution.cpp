@@ -41,7 +41,7 @@ int main(int argc, char** argv) {
 		cerr << "ERROR: You should specify run time (in seconds) and run mode: private or custom.\n";
 		return 0;
 	}
-	double startTime = clock() * 1. / CLOCKS_PER_SEC;
+	double startTime = double(clock()) / CLOCKS_PER_SEC;
 	int runtime = atoi(argv[1]);
 	string runMode = argv[2];
 
@@ -99,5 +99,8 @@ int main(int argc, char** argv) {
 	StupidSolver stupidSolver;
 	RandomSolutionOptimizer optimizer(startTime + runtime, &stupidSolver);
 	optimizer.optimize(config, solution);
+
+    cout << "Final score: " << solution.score << '\n';
+
 	solution.write(config, timetablePath, outputSolutionPath);
 }

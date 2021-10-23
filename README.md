@@ -55,7 +55,7 @@ cd src
 g++ -O2 -std=gnu++17 -g solution.cpp -o solution
 ~~~
 3. Для запуска алгоритмической части на приватном датасете выполните, передав первым аргументом ограничение на время 
-работы в секундах (результат будет сохранен в `data/private/Solution_Private.csv):
+работы в секундах (результат будет сохранен в `data/private/Solution_Private.csv`):
 ~~~
 ./solution time_in_seconds private
 ~~~

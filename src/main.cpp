@@ -1,4 +1,5 @@
 #include <bits/stdc++.h>
+#include <optional>
 
 #include "lib/rapidcsv.h"
 
@@ -10,6 +11,13 @@ const string HANDLING_RATES_PATH_PUBLIC = "../data/public/Handling_Rates_Public.
 const string HANDLING_TIME_PATH_PUBLIC = "../data/public/Handling_Time_Public.csv";
 const string TIMETABLE_PATH_PUBLIC = "../data/public/Timetable_Public.csv";
 const string SOLUTION_PATH_PUBLIC = "../data/public/Solution_Public.csv";
+
+const string AIRCRAFT_CLASSES_PATH_PRIVATE = "../data/private/Aircraft_Classes_Private.csv";
+const string AIRCRAFT_STANDS_PATH_PRIVATE = "../data/private/Aircraft_Stands_Private.csv";
+const string HANDLING_RATES_PATH_PRIVATE = "../data/private/Handling_Rates_Private.csv";
+const string HANDLING_TIME_PATH_PRIVATE = "../data/private/Handling_Time_Private.csv";
+const string TIMETABLE_PATH_PRIVATE = "../data/private/Timetable_Private.csv";
+const string SOLUTION_PATH_PRIVATE = "../data/private/Solution_Private";
 
 const string AIRCRAFT_CLASS_COLUMN = "Aircraft_Class";
 const string MAX_SEATS_COLUMN = "Max_Seats";
@@ -45,14 +53,37 @@ const string AIRCRAFT_TAXIING_COST_PER_MINUTE_ROW = "Aircraft_Taxiing_Cost_per_M
 const string WIDE_BODY_CLASS = "Wide_Body";
 const int BUS_CAPACITY = 80;
 
-int parseTimestamp(const string& timestamp) {
+bool parseDateFormat1(const string& date, int& year, int& month, int& day) {
+	try {
+		year = stoi(date.substr(0, 4));
+		month = stoi(date.substr(5, 2));
+		day = stoi(date.substr(8, 2));
+	} catch (const std::invalid_argument& exception) {
+		return false;
+	}
+	return true;
+}
+
+bool parseDateFormat2(const string& date, int& year, int& month, int& day) {
+	try {
+		day = stoi(date.substr(0, 2));
+		month = stoi(date.substr(3, 2));
+		year = stoi(date.substr(6, 4));
+	} catch (const std::invalid_argument& exception) {
+		return false;
+	}
+	return true;
+}
+
+int parseDate(const string& date) {
+	int year = 0, month = 0, day = 0;
+	if (!parseDateFormat1(date, year, month, day)) {
+		if (!parseDateFormat2(date, year, month, day)) {
+			cerr << "Incorrect date format: " << date << "\n";
+		}
+	}
+
 	static const int MONTH_DAYS[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
-	int year = stoi(timestamp.substr(0, 4));
-	int month = stoi(timestamp.substr(5, 2));
-	int day = stoi(timestamp.substr(8, 2));
-	int hour = stoi(timestamp.substr(11, 2));
-	int minute = stoi(timestamp.substr(14, 2));
-	
 	int days = 0;
 	for (int i = 2001; i < year; i++) {
 		if (i % 4 == 0)
@@ -66,8 +97,33 @@ int parseTimestamp(const string& timestamp) {
 			days++;
 	}
 	days += day - 1;
-	return days * 24 * 60 + hour * 60 + minute;
+	return days;
 }
+
+int parseTime(const string& time) {
+	int colonIndex = (int) time.find(':');
+	int hours = stoi(time.substr(0, colonIndex));
+	int minutes = stoi(time.substr(colonIndex + 1, 2));
+	return hours * 60 + minutes;
+}
+
+int parseTimestamp(const string& timestamp) {
+	int whitespaceIndex = (int) timestamp.find(' ');
+	int days = parseDate(timestamp.substr(0, whitespaceIndex));
+	int minutes = parseTime(timestamp.substr(whitespaceIndex + 1, timestamp.length() - (whitespaceIndex + 1)));
+	return days * 24 * 60 + minutes;
+}
+
+struct Event {
+	int start;
+	int finish;
+	Event(int start_, int finish_): start(start_), finish(finish_) {}
+	bool operator<(const Event& event) const {
+		if (start != event.start)
+			return start < event.start;
+		return finish < event.finish;
+	}
+};
 
 struct Stand {
 	int id;
@@ -79,7 +135,8 @@ struct Stand {
 	int terminal;
 	int taxiingTime;	
 
-	set<pair<int, int>> segments;
+	set<Event> occupiedSegments;
+	set<Event> wideOccupiedSegments;
 
 	bool operator<(const Stand& stand) const {
 		if (jetBridgeArrival != stand.jetBridgeArrival)
@@ -95,20 +152,28 @@ struct Stand {
 		return false;
 	} 
 
-	bool canFit(const pair<int, int>& segment) const {
-		auto it = segments.lower_bound(make_pair(segment.first, segment.first));
-		if (it != segments.end() && it->first <= segment.second)
+	void clear() {
+		occupiedSegments.clear();
+		wideOccupiedSegments.clear();
+	}
+
+	bool canFit(const Event& segment, bool isWide) const {
+		const auto& segments = isWide ? wideOccupiedSegments : occupiedSegments;
+		auto it = segments.lower_bound(Event(segment.start, segment.start));
+		if (it != segments.end() && it->start <= segment.finish)
 			return false;
 		if (it != segments.begin()) {
 			it--;
-			if (it->second >= segment.first)
+			if (it->finish >= segment.start)
 				return false;
 		}
 		return true;
 	}
 
-	void addSegment(const pair<int, int>& segment) {
-		segments.insert(segment);
+	void addSegment(const Event& flightSegment, bool isWide) {
+		occupiedSegments.insert(flightSegment);
+		if (isWide)
+			wideOccupiedSegments.insert(flightSegment);
 	}
 };
 
@@ -131,10 +196,10 @@ struct Flight {
 	// Handling times: <jet bridge, away>.
 	pair<int, int> handlingTimes;
 
-	inline pair<int, int> getHandlingSegment(int taxiingTime, int handlingTime) const {
+	inline Event getHandlingSegment(int taxiingTime, int handlingTime) const {
 		if (adType == 'A')
-			return {timestamp - taxiingTime - handlingTime, timestamp - taxiingTime};
-		return {timestamp + taxiingTime, timestamp + taxiingTime + handlingTime};
+			return Event(timestamp - taxiingTime - handlingTime, timestamp - taxiingTime);
+		return Event(timestamp + taxiingTime, timestamp + taxiingTime + handlingTime);
 	}
 };
 
@@ -147,7 +212,7 @@ struct Solution {
 		int rows = (int) doc.GetRowCount();
 		for (int i = 0; i < rows; i++) 
 			doc.SetCell<int>(doc.GetColumnIdx(AIRCRAFT_STAND_COLUMN), i, stands[i]);
-		doc.Save(solutionPath);
+		doc.Save(solutionPath + "_" + to_string(score) + ".csv");
 	}
 };
 
@@ -162,11 +227,17 @@ struct Configuration {
 	vector<Stand> stands;
 	vector<Flight> flights;
 
+	void clear() {
+		for (Stand& stand : stands)
+			stand.clear();
+	}
+
 	string getAircraftClassByCapacity(int capacity) {
 		return lower_bound(maxSeatsClasses.begin(), maxSeatsClasses.end(), pair<int, string>(capacity, ""))->second;
 	}
 
-	int getCost(const Flight& flight, Stand& stand) {
+	optional<int> getCost(const Flight& flight, int standIndex, bool shouldAssign) {
+		Stand& stand = stands[standIndex];
 		int cost = stand.taxiingTime * taxiingCost;
 		char jetBridge = (flight.adType == 'A' ? stand.jetBridgeArrival : stand.jetBridgeDeparture);
 		int parkingCost = (jetBridge == 'N' ? parkingCostAway : parkingCostJetBridge); 
@@ -175,22 +246,32 @@ struct Configuration {
 			handlingTime = flight.handlingTimes.first;
 		} else {
 			handlingTime = flight.handlingTimes.second;
-			cost += flight.passengers / BUS_CAPACITY * busCost * stand.busRideTimeToTerminal[flight.terminal - 1];
+			cost += (flight.passengers + BUS_CAPACITY - 1) / BUS_CAPACITY * busCost * stand.busRideTimeToTerminal[flight.terminal - 1];
 		}
 		cost += handlingTime * parkingCost;
-		pair<int, int> handlingSegment = flight.getHandlingSegment(stand.taxiingTime, handlingTime);
-		if (!stand.canFit(handlingSegment))
-			return -1;
-		stand.addSegment(handlingSegment);
+		Event handlingSegment = flight.getHandlingSegment(stand.taxiingTime, handlingTime);
+		if (flight.isWide && jetBridge != 'N') {
+			for (int i = standIndex - 1; i <= standIndex + 1; i += 2) {
+				if (i >= 0 && i < (int) stands.size() && stand.terminal == stands[i].terminal 
+					&& stands[i].jetBridgeArrival != 'N' 
+					&& !stands[i].canFit(handlingSegment, /*isWide=*/true)) {
+					return nullopt;
+				}
+			}
+		}
+		if (!stand.canFit(handlingSegment, /*isWide=*/false))
+			return nullopt;
+		if (shouldAssign) {
+			stand.addSegment(handlingSegment, flight.isWide);
+		}
 		return cost;
 	}
 
 	void adjustFlights() {
 		for (auto& flight : flights) {
-			flight.aircraftClass = getAircraftClassByCapacity(flight.capacity), 
-			flight.isWide = (flight.aircraftClass == WIDE_BODY_CLASS),
+			flight.aircraftClass = getAircraftClassByCapacity(flight.capacity);
+			flight.isWide = (flight.aircraftClass == WIDE_BODY_CLASS);
 			flight.handlingTimes = aircraftClassHandlingTime[flight.aircraftClass];
-			
 		}
 		int minTimestamp = min_element(flights.begin(), flights.end(), 
 			[](const Flight &f1, const Flight &f2) { return f1.timestamp < f2.timestamp; })->timestamp;
@@ -314,33 +395,68 @@ public:
 	virtual Solution solve(Configuration& config) = 0;
 };
 
+class TheoreticalMinimumSolver: public Solver {
+public:
+	virtual Solution solve(Configuration& config) override {
+		Solution solution;
+		for (const auto& flight : config.flights) {
+			int minCost = numeric_limits<int>::max();
+			int bestStandIndex = 0;
+			for (int i = 0; i < (int) config.stands.size(); i++) {
+				auto cost = config.getCost(flight, i, false);
+				if (cost.has_value() && minCost > cost.value())
+					minCost = cost.value(), bestStandIndex = i; 
+			}
+			solution.score += config.getCost(flight, bestStandIndex, false).value();
+		}
+		return solution;
+	}
+};
+
+
 class RandomSolver: public Solver {
 public:
 	virtual Solution solve(Configuration& config) override {
 		Solution solution;
 		for (const auto& flight : config.flights) {
-			for (auto& stand: config.stands) {
-				int cost = config.getCost(flight, stand);
-				if (cost != -1) {
-					solution.stands.push_back(stand.id);
-					solution.score += cost;
-					break;
-				}
+			int minCost = numeric_limits<int>::max();
+			int bestStandIndex = 0;
+			for (int i = 0; i < (int) config.stands.size(); i++) {
+				auto cost = config.getCost(flight, i, false);
+				if (cost.has_value() && minCost > cost.value())
+					minCost = cost.value(), bestStandIndex = i; 
 			}
+			solution.score += config.getCost(flight, bestStandIndex, true).value();
+			solution.stands.push_back(config.stands[bestStandIndex].id);
 		}
 		return solution;
 	}
 };
 
 int main() {
+	/*
 	Configuration config = Configuration::readConfiguration(
 		AIRCRAFT_CLASSES_PATH_PUBLIC,
 		AIRCRAFT_STANDS_PATH_PUBLIC, 
 		HANDLING_RATES_PATH_PUBLIC, 
 		HANDLING_TIME_PATH_PUBLIC, 
 		TIMETABLE_PATH_PUBLIC);
+	*/
+	Configuration config = Configuration::readConfiguration(
+		AIRCRAFT_CLASSES_PATH_PRIVATE,
+		AIRCRAFT_STANDS_PATH_PRIVATE, 
+		HANDLING_RATES_PATH_PRIVATE, 
+		HANDLING_TIME_PATH_PRIVATE, 
+		TIMETABLE_PATH_PRIVATE);
+	
+	TheoreticalMinimumSolver theoreticalMinimumSolver;
+	Solution theoreticalMinimumSolution = theoreticalMinimumSolver.solve(config);
+	cout << "Theoretical minimum score: " << theoreticalMinimumSolution.score << "\n";
+
+	config.clear();
+
 	RandomSolver random_solver;
 	Solution solution = random_solver.solve(config);
-	solution.write(TIMETABLE_PATH_PUBLIC, SOLUTION_PATH_PUBLIC);
-	//cout << solution.score << "\n";
+	cout << "Current solution score: " << solution.score << "\n";
+	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
 }

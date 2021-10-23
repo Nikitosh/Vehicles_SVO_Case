@@ -34,12 +34,16 @@ const string HANDLING_TIME_PATH_PRIVATE = "../data/private/Handling_Time_Private
 const string TIMETABLE_PATH_PRIVATE = "../data/private/Timetable_private.csv";
 const string SOLUTION_PATH_PRIVATE = "../data/private/Solution_Private.csv";
 
+const int MEAN_TAXIING_TIME = 13;
+
 int main(int argc, char** argv) {
-	if (argc < 2) {
-		cerr << "ERROR: You should specify run mode: private or custom.\n";
+	if (argc < 3) {
+		cerr << "ERROR: You should specify run time (in seconds) and run mode: private or custom.\n";
 		return 0;
 	}
-	string runMode = argv[1];
+	double startTime = clock() * 1. / CLOCKS_PER_SEC;
+	int runtime = atoi(argv[1]);
+	string runMode = argv[2];
 
 	string aircraftClassPath;
 	string aircraftStandsPath;
@@ -55,20 +59,20 @@ int main(int argc, char** argv) {
 		handlingTimePath = HANDLING_TIME_PATH_PRIVATE;
 		timetablePath = TIMETABLE_PATH_PRIVATE;	
 		outputSolutionPath = SOLUTION_PATH_PRIVATE;
-		inputSolutionPathIndex = 2;
+		inputSolutionPathIndex = 3;
 	} else {
-		if (argc < 8) {
+		if (argc < 9) {
 			cerr << "ERROR: For custom mode you should specify 6 paths of corresponding tables: " << 
 				"aircraft_classes, aircraft_stands, handling_rates, handling_time, timetable, solution.\n";
 			return 0;
 		}
-		aircraftClassPath = argv[2];
-		aircraftStandsPath = argv[3];
-		handlingRatesPath = argv[4];
-		handlingTimePath = argv[5];
-		timetablePath = argv[6];
-		outputSolutionPath = argv[7];
-		inputSolutionPathIndex = 8;
+		aircraftClassPath = argv[3];
+		aircraftStandsPath = argv[4];
+		handlingRatesPath = argv[5];
+		handlingTimePath = argv[6];
+		timetablePath = argv[7];
+		outputSolutionPath = argv[8];
+		inputSolutionPathIndex = 9;
 	}
 
 	Configuration config = Configuration::readConfiguration(
@@ -88,12 +92,12 @@ int main(int argc, char** argv) {
 		for (const auto& flight : config.flights)
 			flightIds.push_back(flight.id);
 		solution.stands.resize(flightIds.size());
-		GreedyAircraftClassAdjustedTimestampsSolver greedyAircraftClassAdjustedTimestampsSolver(13);
+		GreedyAircraftClassAdjustedTimestampsSolver greedyAircraftClassAdjustedTimestampsSolver(MEAN_TAXIING_TIME);
 		greedyAircraftClassAdjustedTimestampsSolver.solve(config, flightIds, solution);
 	}
 
 	StupidSolver stupidSolver;
-	RandomSolutionOptimizer optimizer(&stupidSolver, 1000000);
+	RandomSolutionOptimizer optimizer(startTime + runtime, &stupidSolver);
 	optimizer.optimize(config, solution);
 	solution.write(config, timetablePath, outputSolutionPath);
 }

@@ -5,12 +5,16 @@ public:
 
 class RandomSolutionOptimizer : public SolutionOptimizer {
 public:
-	RandomSolutionOptimizer(Solver* solver, int iterations): solver_(solver), iterations_(iterations) {}
+	RandomSolutionOptimizer(double finishTimeLimit, Solver* solver): 
+		finishTimeLimit_(finishTimeLimit), solver_(solver) {}
 
 	void optimize(Configuration& config, Solution& solution) override {
         double annealing_temperature = 10000.;
         int annealing_steps = 10000;
-		for (int iteration = 0; iteration < iterations_; iteration++) {
+		for (int iteration = 0;; iteration++) {
+			if (iteration % 100 == 0 && clock() * 1. / CLOCKS_PER_SEC > finishTimeLimit_)
+				break;
+
             if ((iteration + 1) % annealing_steps == 0) {
                 annealing_temperature /= 2.;
             }
@@ -73,6 +77,7 @@ public:
 	}
 
 private:
+	double finishTimeLimit_;
 	mt19937 rng;
 	Solver* solver_;
 	int iterations_;

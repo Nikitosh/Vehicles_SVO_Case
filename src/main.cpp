@@ -16,7 +16,7 @@ const string AIRCRAFT_CLASSES_PATH_PRIVATE = "../data/private/Aircraft_Classes_P
 const string AIRCRAFT_STANDS_PATH_PRIVATE = "../data/private/Aircraft_Stands_Private.csv";
 const string HANDLING_RATES_PATH_PRIVATE = "../data/private/Handling_Rates_Private.csv";
 const string HANDLING_TIME_PATH_PRIVATE = "../data/private/Handling_Time_Private.csv";
-const string TIMETABLE_PATH_PRIVATE = "../data/private/Timetable_Private.csv";
+const string TIMETABLE_PATH_PRIVATE = "../data/private/Timetable_private.csv";
 const string SOLUTION_PATH_PRIVATE = "../data/private/Solution_Private";
 
 const string AIRCRAFT_CLASS_COLUMN = "Aircraft_Class";
@@ -592,7 +592,12 @@ public:
 	RandomSolutionOptimizer(Solver* solver, int iterations): solver_(solver), iterations_(iterations) {}
 
 	void optimize(Configuration& config, Solution& solution) override {
+        double annealing_temperature = 1000.;
+        int annealing_steps = 10000;
 		for (int iteration = 0; iteration < iterations_; iteration++) {
+            if ((iteration + 1) % annealing_steps == 0) {
+                annealing_temperature /= 2.;
+            }
 			Solution optimizedSolution = solution;
 			
 			for (int g = 0; g < 1; g++) {
@@ -635,11 +640,17 @@ public:
 			if (solution.score > optimizedSolution.score) {
 				solution = optimizedSolution;
 			} else {
-				config.clear();
-				for (int i = 0; i < (int) config.flights.size(); i++) {
-					int standIndex = solution.stands[i];
-					config.stands[standIndex].addSegment(config.handlingSegments[i][standIndex], config.flights[i].isWide);	
-				}
+                double prob = exp((double)(solution.score - optimizedSolution.score) / (double)annealing_temperature);
+                if ((double)(rng() % INT_MAX) / (double)(INT_MAX) >= prob) {
+                    config.clear();
+                    for (int i = 0; i < (int) config.flights.size(); i++) {
+                        int standIndex = solution.stands[i];
+                        config.stands[standIndex].addSegment(config.handlingSegments[i][standIndex],
+                                                             config.flights[i].isWide);
+                    }
+                } else {
+                    solution = optimizedSolution;
+                }
 			}
 		}
 	}
@@ -659,13 +670,15 @@ int main() {
 		HANDLING_TIME_PATH_PUBLIC, 
 		TIMETABLE_PATH_PUBLIC);
 	*/
+    cerr << "1\n";
 	Configuration config = Configuration::readConfiguration(
 		AIRCRAFT_CLASSES_PATH_PRIVATE,
 		AIRCRAFT_STANDS_PATH_PRIVATE, 
 		HANDLING_RATES_PATH_PRIVATE, 
 		HANDLING_TIME_PATH_PRIVATE, 
 		TIMETABLE_PATH_PRIVATE);
-	
+
+    cerr << "2\n";
 	/*
 	TheoreticalMinimumSolver theoreticalMinimumSolver;
 	Solution solution = theoreticalMinimumSolver.solve(config);

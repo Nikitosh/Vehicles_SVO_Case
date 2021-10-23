@@ -83,7 +83,7 @@ python app.py
 
 ## Команда
 
-* Никита Подгузов [telegram](t.me/Nikitosh)
-* Ксения Шор [telegram](t.me/kseniiashor)
-* Егор Богомолов [telegram](t.me/ebogomolov)
+* Никита Подгузов [telegram](https://t.me/Nikitosh)
+* Ксения Шор [telegram](https://t.me/kseniiashor)
+* Егор Богомолов [telegram](https://t.me/ebogomolov)
 

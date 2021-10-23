@@ -197,7 +197,7 @@ struct Flight {
 	pair<int, int> handlingTimes;
 
 	inline Event getHandlingSegment(int taxiingTime, int handlingTime) const {
-		if (adType == 'A')
+		if (adType == 'D')
 			return Event(timestamp - taxiingTime - handlingTime, timestamp - taxiingTime);
 		return Event(timestamp + taxiingTime, timestamp + taxiingTime + handlingTime);
 	}
@@ -252,7 +252,8 @@ struct Configuration {
 		Event handlingSegment = flight.getHandlingSegment(stand.taxiingTime, handlingTime);
 		if (flight.isWide && jetBridge != 'N') {
 			for (int i = standIndex - 1; i <= standIndex + 1; i += 2) {
-				if (i >= 0 && i < (int) stands.size() && stand.terminal == stands[i].terminal 
+				if (i >= 0 && i < (int) stands.size() && abs(stand.id - stands[i].id) == 1 
+					&& stand.terminal == stands[i].terminal 
 					&& stands[i].jetBridgeArrival != 'N' 
 					&& !stands[i].canFit(handlingSegment, /*isWide=*/true)) {
 					return nullopt;
@@ -418,6 +419,7 @@ class RandomSolver: public Solver {
 public:
 	virtual Solution solve(Configuration& config) override {
 		Solution solution;
+		solution.stands.resize(config.flights.size());
 		for (const auto& flight : config.flights) {
 			int minCost = numeric_limits<int>::max();
 			int bestStandIndex = 0;
@@ -427,7 +429,61 @@ public:
 					minCost = cost.value(), bestStandIndex = i; 
 			}
 			solution.score += config.getCost(flight, bestStandIndex, true).value();
-			solution.stands.push_back(config.stands[bestStandIndex].id);
+			solution.stands[flight.id] = config.stands[bestStandIndex].id;
+		}
+		return solution;
+	}
+};
+
+class GreedyTimestampSolver: public Solver {
+public:
+	virtual Solution solve(Configuration& config) override {
+		Solution solution;
+		solution.stands.resize(config.flights.size());
+		sort(config.flights.begin(), config.flights.end(), 
+			[](const Flight& f1, const Flight& f2) {
+				if (f1.timestamp != f2.timestamp)
+					return f1.timestamp < f2.timestamp;
+				return f1.id < f2.id;
+			});
+		for (const auto& flight : config.flights) {
+			int minCost = numeric_limits<int>::max();
+			int bestStandIndex = 0;
+			for (int i = 0; i < (int) config.stands.size(); i++) {
+				auto cost = config.getCost(flight, i, false);
+				if (cost.has_value() && minCost > cost.value())
+					minCost = cost.value(), bestStandIndex = i; 
+			}
+			solution.score += config.getCost(flight, bestStandIndex, true).value();
+			solution.stands[flight.id] = config.stands[bestStandIndex].id;
+		}
+		return solution;
+	}
+};
+
+class GreedyAircraftClassSolver: public Solver {
+public:
+	virtual Solution solve(Configuration& config) override {
+		Solution solution;
+		solution.stands.resize(config.flights.size());
+		sort(config.flights.begin(), config.flights.end(), 
+			[](const Flight& f1, const Flight& f2) {
+				if (f1.isWide != f2.isWide)
+					return f1.isWide > f2.isWide;
+				if (f1.timestamp != f2.timestamp)
+					return f1.timestamp < f2.timestamp;
+				return f1.id < f2.id;
+			});
+		for (const auto& flight : config.flights) {
+			int minCost = numeric_limits<int>::max();
+			int bestStandIndex = 0;
+			for (int i = 0; i < (int) config.stands.size(); i++) {
+				auto cost = config.getCost(flight, i, false);
+				if (cost.has_value() && minCost > cost.value())
+					minCost = cost.value(), bestStandIndex = i; 
+			}
+			solution.score += config.getCost(flight, bestStandIndex, true).value();
+			solution.stands[flight.id] = config.stands[bestStandIndex].id;
 		}
 		return solution;
 	}
@@ -452,11 +508,23 @@ int main() {
 	TheoreticalMinimumSolver theoreticalMinimumSolver;
 	Solution theoreticalMinimumSolution = theoreticalMinimumSolver.solve(config);
 	cout << "Theoretical minimum score: " << theoreticalMinimumSolution.score << "\n";
-
 	config.clear();
 
-	RandomSolver random_solver;
-	Solution solution = random_solver.solve(config);
-	cout << "Current solution score: " << solution.score << "\n";
+	RandomSolver randomSolver;
+	Solution solution = randomSolver.solve(config);
+	cout << "Random solution score: " << solution.score << "\n";
 	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
+	config.clear();
+
+	GreedyTimestampSolver greedyTimestampSolver;
+	solution = greedyTimestampSolver.solve(config);
+	cout << "Greedy timestamp solution score: " << solution.score << "\n";
+	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
+	config.clear();
+
+	GreedyAircraftClassSolver greedyAircraftClassSolver;
+	solution = greedyAircraftClassSolver.solve(config);
+	cout << "Greedy aircraft class solution score: " << solution.score << "\n";
+	solution.write(TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);
+	config.clear();
 }

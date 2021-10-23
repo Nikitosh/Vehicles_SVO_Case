@@ -1,8 +1,11 @@
+// Solver interface that solves the original problem for `flightIds` subset of the flights 
+// and applies it to `solution`.
 class Solver {
 public:
 	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) = 0;
 };
 
+// Theoretical minimum solver.
 class TheoreticalMinimumSolver: public Solver {
 public:
 	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
@@ -11,7 +14,7 @@ public:
 	}
 };
 
-
+// Solver that handles all flights in the given order and picks the best stand for each of them.
 class StupidSolver: public Solver {
 public:
 	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
@@ -28,7 +31,7 @@ public:
 	}
 };
 
-
+// Solver that sorts all the flights in ascending order of timestamps and solves them greedily.
 class GreedyTimestampSolver: public Solver {
 public:
 	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
@@ -43,6 +46,8 @@ public:
 	}
 };
 
+// Solver that sorts all the flights in ascending order of timestamps (taking into account 
+// aircraft class) and solves them greedily.
 class GreedyAircraftClassSolver: public Solver {
 public:
 	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {
@@ -59,6 +64,8 @@ public:
 	}
 };
 
+// Solver that sorts all the flights in ascending order of modeled timestamps (taking into account 
+// aircraft class) and solves them greedily.
 class GreedyAircraftClassAdjustedTimestampsSolver: public Solver {
 public:
 	GreedyAircraftClassAdjustedTimestampsSolver(int meanTaxiingTime): meanTaxiingTime_(meanTaxiingTime) {}
@@ -83,6 +90,7 @@ private:
 	int meanTaxiingTime_;
 };
 
+// Solver that sorts all the flights in ascending order of the cost of the best stand and solves them greedily.
 class GreedyCostSolver: public Solver {
 public:
 	virtual void solve(Configuration& config, const vector<int>& flightIds, Solution& solution) override {

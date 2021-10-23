@@ -1,6 +1,10 @@
+// Corresponds to Aircraft Handling event.
 struct Event {
+	// Start time, in minutes.
 	int start;
+	// Finish time, in minutes.
 	int finish;
+	// Flight ID of the aircraft.
 	int flightId;
 	Event() {}
 	Event(int start_, int finish_, int flightId_): start(start_), finish(finish_), flightId(flightId_) {}
@@ -11,6 +15,8 @@ struct Event {
 	}
 };
 
+// Returns list of all events that overlap with given event.
+// Is used in optimization step of the algorithm to remove conflicting aircrafts.
 vector<Event> findOverlappingEvents(const set<Event>& segments, const Event& event) {
 	auto it = segments.lower_bound(event);
 	vector<Event> overlappingEvents;

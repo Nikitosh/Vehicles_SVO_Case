@@ -1,3 +1,5 @@
+// All the parsing utils.
+
 bool parseDateFormat1(const string& date, int& year, int& month, int& day) {
 	try {
 		year = stoi(date.substr(0, 4));

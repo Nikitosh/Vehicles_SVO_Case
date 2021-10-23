@@ -19,8 +19,8 @@ const string AL_CODE_COLUMN = "flight_AL_Synchron_code";
 const string FLIGHT_NUMBER_COLUMN = "flight_number";
 const string FLIGHT_TYPE_COLUMN = "flight_ID";
 const string FLIGHT_TERMINAL_COLUMN = "flight_terminal_#";
-const string FLIGHT_AP_COLUMN = "flight_AP"; // DO WE NEED?
-const string AC_COLUMN = "flight_AC_Synchron_code"; // DO WE NEED?
+const string FLIGHT_AP_COLUMN = "flight_AP"; 
+const string AC_COLUMN = "flight_AC_Synchron_code"; 
 const string FLIGHT_CAPACITY_COLUMN = "flight_AC_PAX_capacity_total";
 const string FLIGHT_PASSENGERS_COLUMN = "flight_PAX";
 
@@ -32,6 +32,7 @@ const string AIRCRAFT_TAXIING_COST_PER_MINUTE_ROW = "Aircraft_Taxiing_Cost_per_M
 const string WIDE_BODY_CLASS = "Wide_Body";
 const int BUS_CAPACITY = 80;
 
+// Stores the whole configuration for original problem.
 struct Configuration {
 	// Handling times: <jet bridge, away>.
 	unordered_map<string, pair<int, int>> aircraftClassHandlingTime;
@@ -106,6 +107,7 @@ struct Configuration {
 		return cost;
 	}
 
+	// Precalculates all the costs.
 	void calculateCosts() {
 		costs.resize(flights.size(), vector<int>(stands.size()));
 		sortedCosts.resize(flights.size(), vector<pair<int, int>>(stands.size()));
@@ -119,6 +121,7 @@ struct Configuration {
 		}
 	}
 
+	// Precalculates neighboring stands.
 	void calculateNeighboringStands() {
 		neighboringStands.resize(stands.size());
 		for (int i = 0; i < (int) stands.size(); i++) {
@@ -133,6 +136,7 @@ struct Configuration {
 		}
 	}
 
+	// Reads all configurations from given paths.
 	static Configuration readConfiguration(const string& aircraftClassesPath,
 		                                   const string& aircraftStandsPath,
 		                                   const string& handlingRatesPath,

@@ -1,3 +1,5 @@
+// Optimizer interface that solves the original problem.
+// Accepts the solution and run time limit and tries to optimize it.
 class SolutionOptimizer {
 public:
 	virtual void optimize(Configuration& config, Solution& solution) = 0;
@@ -8,11 +10,15 @@ public:
 	RandomSolutionOptimizer(double finishTimeLimit, Solver* solver): 
 		finishTimeLimit_(finishTimeLimit), solver_(solver) {}
 
+	// Tries two optimization steps:
+	// * Move given flight to more profitable stand by 
+	//   removing all conflicting aircrafts and readding them in random order afterwards.
+	// * Clear up several stands and readd them in random order afterwards.
 	void optimize(Configuration& config, Solution& solution) override {
         double annealing_temperature = 10000.;
         int annealing_steps = 10000;
 		for (int iteration = 0;; iteration++) {
-			if (iteration % 100 == 0 && clock() * 1. / CLOCKS_PER_SEC > finishTimeLimit_)
+			if (iteration % 100 == 0 && double(clock()) / CLOCKS_PER_SEC > finishTimeLimit_)
 				break;
 
             if ((iteration + 1) % annealing_steps == 0) {
@@ -56,8 +62,6 @@ public:
 				solver_->solve(config, removedFlightIds, optimizedSolution);
 			}
 
-			if (iteration % 1000 == 0)
-				cout << "Iteration: " << iteration << ", score: " << solution.score << "\n";
 			if (solution.score > optimizedSolution.score) {
 				solution = optimizedSolution;
 			} else {

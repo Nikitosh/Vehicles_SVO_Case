@@ -1,3 +1,4 @@
+// Corresponds to the Flight concept.
 struct Flight {
 	int id;
 	// 'A' -- arrival, 'D' -- departure.
@@ -5,6 +6,7 @@ struct Flight {
 	// Timestamp in minutes starting from the minimum timestamp across all flight - C 
 	// (to account handling and taxiing for it).  
 	int timestamp;
+	// Name of the airlines.
 	string airlines;
 	int number;
 	// 'I' -- international, 'D' -- domestic.
@@ -12,10 +14,13 @@ struct Flight {
 	int terminal;
 	int capacity;
 	int passengers;
+	// One of three predefined classes.
 	string aircraftClass;
+	// If the aircraft has "Wide_Body" class.
 	bool isWide;
 	// Handling times: <jet bridge, away>.
 	pair<int, int> handlingTimes;
+	// Modeled timestamp of handling event start.
 	int adjustedTimestamp;
 
 	inline Event getHandlingSegment(int taxiingTime, int handlingTime) const {

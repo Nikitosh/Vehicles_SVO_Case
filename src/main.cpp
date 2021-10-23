@@ -52,6 +52,7 @@ const string AIRCRAFT_TAXIING_COST_PER_MINUTE_ROW = "Aircraft_Taxiing_Cost_per_M
 
 const string WIDE_BODY_CLASS = "Wide_Body";
 const int BUS_CAPACITY = 80;
+const int STANDS_TO_REMOVE = 5;
 
 bool parseDateFormat1(const string& date, int& year, int& month, int& day) {
 	try {
@@ -589,65 +590,94 @@ public:
 
 class RandomSolutionOptimizer : public SolutionOptimizer {
 public:
-	RandomSolutionOptimizer(Solver* solver, int iterations): solver_(solver), iterations_(iterations) {}
+	RandomSolutionOptimizer(Solver* solver, int iterations): solver_(solver), iterations_(iterations), rng(clock()) {}
 
 	void optimize(Configuration& config, Solution& solution) override {
         double annealing_temperature = 1000.;
-        int annealing_steps = 10000;
+        double annealing_multiple = 1.5;
+        int annealing_steps = 50000;
+        int lastUpdatedIteration = 0;
 		for (int iteration = 0; iteration < iterations_; iteration++) {
             if ((iteration + 1) % annealing_steps == 0) {
-                annealing_temperature /= 2.;
+                if (lastUpdatedIteration > iteration - annealing_steps) {
+                    annealing_temperature /= annealing_multiple;
+                }
             }
 			Solution optimizedSolution = solution;
-			
-			for (int g = 0; g < 1; g++) {
-				int flightId = rng() % (int) config.flights.size();
-				int standIndex = solution.stands[flightId];
-				int standSortedPosition = 0;
-				for (int j = 0; j < (int) config.stands.size(); j++) {
-					if (config.sortedCosts[flightId][j].second == standIndex) {
-						standSortedPosition = j;
-						break;
-					}
-				}
-				if (standSortedPosition == 0)
-					continue;
-				config.stands[standIndex].removeSegment(config.handlingSegments[flightId][standIndex]);
-				optimizedSolution.score -= config.costs[flightId][standIndex];
-				optimizedSolution.stands[flightId] = -1;
+            vector<int> removedFlightIds;
+            int flightId = rng() % (int) config.flights.size();
 
-				int newStandSortedPosition = rng() % standSortedPosition;
-				if (newStandSortedPosition == standSortedPosition)
-					newStandSortedPosition--;
-				int newStandIndex = config.sortedCosts[flightId][newStandSortedPosition].second;
-				Event handlingSegment = config.handlingSegments[flightId][newStandIndex];
-				vector<int> removedFlightIds = config.stands[newStandIndex].eraseAllOverlappingEvents(handlingSegment, /*isWide=*/false, config, optimizedSolution);
-				if (config.flights[flightId].isWide) {
-					for (int neighboringStandIndex : config.neighboringStands[newStandIndex]) {
-						vector<int> removedNeighboringFlightIds = 
-							config.stands[neighboringStandIndex].eraseAllOverlappingEvents(handlingSegment, /*isWide=*/true, config, optimizedSolution);
-						removedFlightIds.insert(removedFlightIds.end(), removedNeighboringFlightIds.begin(), removedNeighboringFlightIds.end());
-					}
-				}
+            if (rng() % 5) {
+                int standIndex = solution.stands[flightId];
+                int standSortedPosition = 0;
+                for (int j = 0; j < (int) config.stands.size(); j++) {
+                    if (config.sortedCosts[flightId][j].second == standIndex) {
+                        standSortedPosition = j;
+                        break;
+                    }
+                }
+                if (standSortedPosition == 0)
+                    continue;
+                config.stands[standIndex].removeSegment(config.handlingSegments[flightId][standIndex]);
+                optimizedSolution.score -= config.costs[flightId][standIndex];
+                optimizedSolution.stands[flightId] = -1;
 
-				optimizedSolution.assign(config, flightId, newStandIndex);
-			
-				shuffle(removedFlightIds.begin(), removedFlightIds.end(), rng);
-				solver_->solve(config, removedFlightIds, optimizedSolution);
-			}
+                int newStandSortedPosition = rng() % standSortedPosition;
+                if (newStandSortedPosition == standSortedPosition)
+                    newStandSortedPosition--;
+                int newStandIndex = config.sortedCosts[flightId][newStandSortedPosition].second;
+                Event handlingSegment = config.handlingSegments[flightId][newStandIndex];
+                removedFlightIds = config.stands[newStandIndex].eraseAllOverlappingEvents(
+                        handlingSegment, /*isWide=*/false, config, optimizedSolution);
+                if (config.flights[flightId].isWide) {
+                    for (int neighboringStandIndex: config.neighboringStands[newStandIndex]) {
+                        vector<int> removedNeighboringFlightIds =
+                                config.stands[neighboringStandIndex].eraseAllOverlappingEvents(
+                                        handlingSegment, /*isWide=*/true, config, optimizedSolution);
+                        removedFlightIds.insert(removedFlightIds.end(), removedNeighboringFlightIds.begin(),
+                                                removedNeighboringFlightIds.end());
+                    }
+                }
+
+                optimizedSolution.assign(config, flightId, newStandIndex);
+
+                shuffle(removedFlightIds.begin(), removedFlightIds.end(), rng);
+                solver_->solve(config, removedFlightIds, optimizedSolution);
+            } else {
+                for (int i = 0; i < STANDS_TO_REMOVE; i++) {
+                    int standId = rng() % int(config.stands.size());
+                    auto& stand = config.stands[standId];
+                    for (auto it = stand.occupiedSegments.begin(); it != stand.occupiedSegments.end(); it++) {
+                        removedFlightIds.push_back(it->flightId);
+                    }
+                    stand.clear();
+                }
+                for (int removedFlightId : removedFlightIds) {
+                    int standIndex = solution.stands[removedFlightId];
+                    optimizedSolution.score -= config.costs[removedFlightId][standIndex];
+                    optimizedSolution.stands[removedFlightId] = -1;
+                }
+                shuffle(removedFlightIds.begin(), removedFlightIds.end(), rng);
+                solver_->solve(config, removedFlightIds, optimizedSolution);
+            }
 
 			if (iteration % 1000 == 0)
 				cout << "Iteration: " << iteration << ", score: " << solution.score << "\n";
 			if (solution.score > optimizedSolution.score) {
 				solution = optimizedSolution;
+                lastUpdatedIteration = iteration;
 			} else {
                 double prob = exp((double)(solution.score - optimizedSolution.score) / (double)annealing_temperature);
                 if ((double)(rng() % INT_MAX) / (double)(INT_MAX) >= prob) {
-                    config.clear();
-                    for (int i = 0; i < (int) config.flights.size(); i++) {
-                        int standIndex = solution.stands[i];
-                        config.stands[standIndex].addSegment(config.handlingSegments[i][standIndex],
-                                                             config.flights[i].isWide);
+                    removedFlightIds.push_back(flightId);
+                    for (int removedFlightId : removedFlightIds) {
+                        int standIndex = optimizedSolution.stands[removedFlightId];
+                        config.stands[standIndex].removeSegment(config.handlingSegments[removedFlightId][standIndex]);
+                    }
+                    for (int removedFlightId : removedFlightIds) {
+                        int standIndex = solution.stands[removedFlightId];
+                        config.stands[standIndex].addSegment(config.handlingSegments[removedFlightId][standIndex],
+                                                             config.flights[removedFlightId].isWide);
                     }
                 } else {
                     solution = optimizedSolution;
@@ -671,7 +701,6 @@ int main() {
 		HANDLING_TIME_PATH_PUBLIC, 
 		TIMETABLE_PATH_PUBLIC);
 	*/
-    cerr << "1\n";
 	Configuration config = Configuration::readConfiguration(
 		AIRCRAFT_CLASSES_PATH_PRIVATE,
 		AIRCRAFT_STANDS_PATH_PRIVATE, 
@@ -679,7 +708,6 @@ int main() {
 		HANDLING_TIME_PATH_PRIVATE, 
 		TIMETABLE_PATH_PRIVATE);
 
-    cerr << "2\n";
 	/*
 	TheoreticalMinimumSolver theoreticalMinimumSolver;
 	Solution solution = theoreticalMinimumSolver.solve(config);
@@ -704,7 +732,9 @@ int main() {
 	*/
 
 	StupidSolver stupidSolver;
-	RandomSolutionOptimizer optimizer(&stupidSolver, 1000000);
+    GreedyAircraftClassSolver greedyAircraftClassSolver;
+	RandomSolutionOptimizer optimizer(&stupidSolver, 100000000);
+//    RandomSolutionOptimizer optimizer(&greedyAircraftClassSolver, 10000000);
 	optimizer.optimize(config, solution);
 	cout << "Optimized solution score: " << solution.score << "\n";
 	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);

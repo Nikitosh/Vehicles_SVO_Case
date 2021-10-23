@@ -533,7 +533,7 @@ public:
 		sort(sortedFlightIds.begin(), sortedFlightIds.end(), 
 			[&config](int flightId1, int flightId2) {
 				if (config.flights[flightId1].isWide != config.flights[flightId2].isWide)
-					return config.flights[flightId1].isWide < config.flights[flightId2].isWide;
+					return config.flights[flightId1].isWide > config.flights[flightId2].isWide;
 				if (config.flights[flightId1].timestamp != config.flights[flightId2].timestamp)
 					return config.flights[flightId1].timestamp < config.flights[flightId2].timestamp;
 				return flightId1 < flightId2;
@@ -552,7 +552,7 @@ public:
 		sort(sortedFlightIds.begin(), sortedFlightIds.end(), 
 			[&config, meanTaxiingTime](int flightId1, int flightId2) {
 				if (config.flights[flightId1].isWide != config.flights[flightId2].isWide)
-					return config.flights[flightId1].isWide < config.flights[flightId2].isWide;
+					return config.flights[flightId1].isWide > config.flights[flightId2].isWide;
 				int f1Timestamp = config.flights[flightId1].getAdjustedTimestamp(meanTaxiingTime);
 				int f2Timestamp = config.flights[flightId2].getAdjustedTimestamp(meanTaxiingTime);
 				if (f1Timestamp != f2Timestamp)
@@ -630,8 +630,9 @@ public:
 				shuffle(removedFlightIds.begin(), removedFlightIds.end(), rng);
 				solver_->solve(config, removedFlightIds, optimizedSolution);
 			}
-			
-			cout << "Iteration: " << iteration << ", score: " << solution.score << "\n";
+
+			if (iteration % 1000 == 0)
+				cout << "Iteration: " << iteration << ", score: " << solution.score << "\n";
 			if (solution.score > optimizedSolution.score) {
 				solution = optimizedSolution;
 			} else {
@@ -690,7 +691,7 @@ int main() {
 	*/
 
 	StupidSolver stupidSolver;
-	RandomSolutionOptimizer optimizer(&stupidSolver, 100000);
+	RandomSolutionOptimizer optimizer(&stupidSolver, 1000000);
 	optimizer.optimize(config, solution);
 	cout << "Optimized solution score: " << solution.score << "\n";
 	solution.write(config, TIMETABLE_PATH_PRIVATE, SOLUTION_PATH_PRIVATE);

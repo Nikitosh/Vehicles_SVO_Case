@@ -2,11 +2,13 @@ import os
 
 import numpy as np
 import pandas as pd
-
+from collections import Counter
 
 class Configuration:
-    def __init__(self, data_dir):
+    def __init__(self, data_dir, flights_mapping, model_name):
         self.data_dir = data_dir
+        self.flights_mapping = flights_mapping
+
         self.aircraft_classes = pd.read_csv(os.path.join(data_dir, "Aircraft_Classes_Private.csv"), index_col=0,
                                             squeeze=True)
         self.stands = pd.read_csv(os.path.join(data_dir, "Aircraft_Stands_Private.csv"), index_col=0)
@@ -14,7 +16,7 @@ class Configuration:
                                           squeeze=True)
         self.handling_times = pd.read_csv(os.path.join(data_dir, "Handling_Time_Private.csv"), index_col=0,
                                           squeeze=True)
-        self.flights = pd.read_csv(os.path.join(data_dir, "Timetable_private.csv"), index_col=0)
+        self.flights = pd.read_csv(os.path.join(data_dir, model_name), index_col=0)
 
         self.bus_cost = self.handling_rates['Bus_Cost_per_Minute']
         self.away_ac_stand_cost = self.handling_rates['Away_Aircraft_Stand_Cost_per_Minute']
@@ -40,6 +42,10 @@ class Configuration:
 
     def ac_classes(self):
         return self.aircraft_classes.index.tolist()
+
+    def stand_counts(self):
+        return Counter(self.flights_mapping)
+
 
 feature_ids = [
     'total_cost', 'taxiing_cost', 'bus_cost', 'parking_cost', 'handling_time', 'taxiing_time', 'use_jet_bridge',
@@ -93,10 +99,11 @@ def calculate_features(flight_id: int, config: Configuration, flights_mapping: d
     ])
 
 
-def get_config():
+def get_config(model_name: str = "Solution_Private_1963435.csv"):
     data_dir = os.path.join("..", "data", "private")
-    config = Configuration(data_dir)
-    flights_mapping = pd.read_csv(os.path.join(data_dir, "Solution_Private_1994060.csv"), index_col=0).Aircraft_Stand
+    flights_mapping = pd.read_csv(os.path.join(data_dir, model_name), index_col=0).Aircraft_Stand
+    # flights_mapping = pd.read_csv(os.path.join(data_dir, "Timetable_baseline.csv"), index_col=0).Aircraft_Stand
+    config = Configuration(data_dir, flights_mapping, model_name)
     features = np.array([calculate_features(flight_id, config, flights_mapping) for flight_id in config.flights.index])
 
     for i, feature in enumerate(feature_ids):

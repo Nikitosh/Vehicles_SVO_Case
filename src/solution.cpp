@@ -99,5 +99,8 @@ int main(int argc, char** argv) {
 	StupidSolver stupidSolver;
 	RandomSolutionOptimizer optimizer(startTime + runtime, &stupidSolver);
 	optimizer.optimize(config, solution);
+
+    cout << "Final score: " << solution.score << '\n';
+
 	solution.write(config, timetablePath, outputSolutionPath);
 }
